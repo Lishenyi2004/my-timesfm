@@ -1,7 +1,7 @@
 pyyaml
 numpy
 pandas
-torch
+torch==2.4.0
 scikit-learn
 
 transformers==4.40.1

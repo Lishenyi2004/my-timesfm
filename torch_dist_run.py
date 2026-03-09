@@ -45,11 +45,16 @@ def parse_arbitrary_args(argv):
 
 
 def obtain_dist_env_dict():
-    num_gpus_per_node = os.getenv('LOCAL_WORLD_SIZE') or torch.cuda.device_count() or 1
-    num_nodes = os.getenv('WORLD_SIZE') or 1
-    rank = os.getenv('RANK') or 0
+    num_gpus_per_node = os.getenv('LOCAL_WORLD_SIZE') or os.getenv('GPU_PER_NODE') or torch.cuda.device_count() or 1
+    num_nodes = os.getenv('NNODES') or os.getenv('NODE_COUNT') or os.getenv('WORLD_SIZE') or 1
+    rank = os.getenv('NODE_RANK') or os.getenv('RANK') or 0
     master_addr = os.getenv('MASTER_ADDR') or 'localhost'
     master_port = os.getenv('MASTER_PORT') or 9899
+
+    num_gpus_per_node = int(num_gpus_per_node)
+    num_nodes = int(num_nodes)
+    rank = int(rank)
+    master_port = int(master_port)
 
     if master_addr is None:
         return None
@@ -57,7 +62,7 @@ def obtain_dist_env_dict():
         return {
             'master_addr': master_addr,
             'master_port': master_port,
-            'world_size': num_nodes,
+            'num_nodes': num_nodes,
             'rank': rank,
             'local_world_size': num_gpus_per_node,
         }
@@ -72,7 +77,7 @@ def auto_dist_run(main_file: str, argv: str):
             f'--master_port={env_dict["master_port"]}',
             f'--node_rank={env_dict["rank"]}',
             f'--nproc_per_node={env_dict["local_world_size"]}',
-            f'--nnodes={env_dict["world_size"]}',
+            f'--nnodes={env_dict["num_nodes"]}',
         ])
 
         executed_cmd = launch_cmd + f' {main_file} {argv}'
@@ -94,7 +99,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--port', '-p',
-        default=9899,
+        default=None,
         type=int,
         help='Port to use for distributed training'
     )
@@ -103,7 +108,10 @@ if __name__ == '__main__':
     argv = ' '.join(unknown)
 
     unique_job_name = args.main_file + argv
-    os.environ['MASTER_PORT'] = str(args.port)
+    if args.port is not None:
+        os.environ['MASTER_PORT'] = str(args.port)
+    elif os.getenv('MASTER_PORT') is None:
+        os.environ['MASTER_PORT'] = '9899'
 
     auto_dist_run(
         main_file=args.main_file,

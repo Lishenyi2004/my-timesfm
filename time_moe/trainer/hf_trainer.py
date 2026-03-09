@@ -20,6 +20,66 @@ class TimeMoeTrainer(transformers.Trainer):
         self.tokenizer = kwargs.get("tokenizer", None)
         self.label_column = label_column
         self.loss_mask_column = loss_mask_column
+        self._extra_loss_sums = {}
+        self._extra_loss_counts = {}
+
+    @staticmethod
+    def _extract_metric_value(outputs, key: str):
+        value = None
+        if isinstance(outputs, dict):
+            value = outputs.get(key)
+        else:
+            value = getattr(outputs, key, None)
+
+        if value is None:
+            return None
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                return None
+            return value.detach().float().mean().item()
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _accumulate_extra_metric(self, name: str, value):
+        if value is None:
+            return
+        self._extra_loss_sums[name] = self._extra_loss_sums.get(name, 0.0) + float(value)
+        self._extra_loss_counts[name] = self._extra_loss_counts.get(name, 0) + 1
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        if num_items_in_batch is not None:
+            outputs = model(**inputs, num_items_in_batch=num_items_in_batch)
+        else:
+            outputs = model(**inputs)
+
+        if isinstance(outputs, dict):
+            loss = outputs["loss"]
+        else:
+            loss = outputs.loss if hasattr(outputs, "loss") else outputs[0]
+
+        if model.training:
+            self._accumulate_extra_metric('train_loss', self._extract_metric_value(outputs, 'train_loss'))
+            self._accumulate_extra_metric('quantile_loss_sum', self._extract_metric_value(outputs, 'quantile_loss_sum'))
+
+        if return_outputs:
+            return loss, outputs
+        return loss
+
+    def log(self, logs, start_time=None):
+        if self._extra_loss_sums:
+            logs = dict(logs)
+            for metric_name, metric_sum in self._extra_loss_sums.items():
+                metric_count = self._extra_loss_counts.get(metric_name, 0)
+                if metric_count > 0:
+                    logs[metric_name] = metric_sum / metric_count
+            self._extra_loss_sums.clear()
+            self._extra_loss_counts.clear()
+
+        if start_time is None:
+            return super().log(logs)
+        return super().log(logs, start_time=start_time)
 
     def create_scheduler(self, num_training_steps: int, optimizer: torch.optim.Optimizer = None):
         optimizer = self.optimizer if optimizer is None else optimizer
@@ -30,6 +90,7 @@ class TimeMoeTrainer(transformers.Trainer):
                     optimizer=optimizer,
                     num_warmup_steps=self.args.get_warmup_steps(num_training_steps),
                     num_training_steps=num_training_steps,
+                    num_cycles=self.args.cosine_num_cycles,
                     min_lr_ratio=min_lr_ratio,
                 )
             else:
@@ -62,6 +123,9 @@ class TimeMoeTrainer(transformers.Trainer):
 class TimeMoETrainingArguments(transformers.TrainingArguments):
     min_learning_rate: float = field(
         default=0, metadata={"help": "Minimum learning rate for cosine_schedule"}
+    )
+    cosine_num_cycles: float = field(
+        default=0.5, metadata={"help": "Number of cosine cycles when using cosine scheduler"}
     )
 
 
