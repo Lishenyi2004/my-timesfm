@@ -63,6 +63,7 @@ db.sqlite3-journal
 logs/
 logs_2/
 logs_cp/
+timesfm-2.5-200m-pytorch/
 # Flask stuff:
 instance/
 .webassets-cache
