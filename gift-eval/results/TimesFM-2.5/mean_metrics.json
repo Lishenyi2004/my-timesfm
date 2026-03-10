@@ -1,0 +1,17 @@
+{
+  "model": "TimesFM-2.5",
+  "num_configs": 91,
+  "means": {
+    "eval_metrics/MSE[mean]": 2757003321.207874,
+    "eval_metrics/MSE[0.5]": 2757003321.207874,
+    "eval_metrics/MAE[0.5]": 1033.8607394712487,
+    "eval_metrics/MASE[0.5]": 2.494174535726016,
+    "eval_metrics/MAPE[0.5]": 348459717788.8476,
+    "eval_metrics/sMAPE[0.5]": 0.4865903981720154,
+    "eval_metrics/MSIS": 77.46121799306617,
+    "eval_metrics/RMSE[mean]": 7027.751423827863,
+    "eval_metrics/NRMSE[mean]": 1.1698842967904082,
+    "eval_metrics/ND[0.5]": 0.39406408246477503,
+    "eval_metrics/mean_weighted_sum_quantile_loss": 0.3662924836520378
+  }
+}

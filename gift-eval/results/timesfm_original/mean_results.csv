@@ -1,0 +1,2 @@
+aggregation_level,rows_before,rows_after,eval_metrics/MSE[mean],eval_metrics/MSE[0.5],eval_metrics/MAE[0.5],eval_metrics/MASE[0.5],eval_metrics/MAPE[0.5],eval_metrics/sMAPE[0.5],eval_metrics/MSIS,eval_metrics/RMSE[mean],eval_metrics/NRMSE[mean],eval_metrics/ND[0.5],eval_metrics/mean_weighted_sum_quantile_loss
+global_geometric_mean,97,53,6873.3372675497585,6873.3372675497585,32.818379220640416,0.9241905323127555,1.7878426391482112,0.21575886972778632,7.681311107064693,82.9055924986352,0.3892129698146014,0.1540708950506267,0.12351279545049433
