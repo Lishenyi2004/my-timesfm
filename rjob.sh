@@ -1,6 +1,6 @@
-JOB_NAME="time-moe-train4"
+JOB_NAME="time-moe-train8"
 WORKDIR="/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE"
-TRAIN_SCRIPT="${WORKDIR}/train_2.sh"
+TRAIN_SCRIPT="${WORKDIR}/train.sh"
 
 # 资源配置
 GPU_PER_NODE=8

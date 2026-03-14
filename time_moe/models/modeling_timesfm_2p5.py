@@ -199,7 +199,7 @@ class TimesFM2p5ForTraining(nn.Module):
 
         device = input_ids.device
         input_ids = input_ids.to(dtype=torch.float32)
-        
+        print(f"Input IDs shape: {input_ids.shape}, dtype: {input_ids.dtype}")
         # 1. 准备完整的序列数据 (Full Series)
         full_series = input_ids
         
@@ -216,8 +216,39 @@ class TimesFM2p5ForTraining(nn.Module):
         # 截断多余的部分，保证是 patch_len 的倍数
         valid_len = num_patches * self.patch_len
         input_series = full_series[:, :valid_len]
-        input_mask_series = full_valid[:, :valid_len]
-        
+        input_mask_series = full_valid[:, :valid_len].clone()
+        if num_patches < 2:
+            raise ValueError(f"Sequence too short: need at least 2 patches, got {num_patches}")
+
+ 
+        first_patch_mask_end = torch.randint(
+            low=0,
+            high=self.patch_len,
+            size=(batch_size,),
+            device=device,
+        )
+        first_patch_positions = torch.arange(self.patch_len, device=device).unsqueeze(0)
+        first_patch_prefix_mask = first_patch_positions <= first_patch_mask_end.unsqueeze(1)
+        input_mask_series[:, :self.patch_len] = input_mask_series[:, :self.patch_len] * torch.logical_not(
+            first_patch_prefix_mask
+        ).to(dtype=input_mask_series.dtype)
+
+        # 一个 batch 统一随机一次
+        hist_last_patch_idx = torch.randint(
+            low=0,
+            high=num_patches - 4,
+            size=(1,),
+            device=device,
+        ).item()
+
+        hist_len = (hist_last_patch_idx + 1) * self.patch_len
+
+        hist = full_series[:, :hist_len]
+        gt = full_series[:, hist_len:valid_len]
+
+        hist_valid = full_valid[:, :hist_len]
+        gt_valid = full_valid[:, hist_len:valid_len]
+
         # 3. 构建 Input Patches [B, N, 32]
         patched_inputs = input_series.reshape(batch_size, num_patches, self.patch_len)
         patched_masks = torch.logical_not(
@@ -234,7 +265,8 @@ class TimesFM2p5ForTraining(nn.Module):
         normed_inputs = normed_inputs.to(dtype=model_dtype)
 
         # 5. 模型前向传播
-        (_, _, output_ts, _), _ = self.backbone(normed_inputs, patched_masks)
+        (_, _, output_ts, output_quantile_spread), _ = self.backbone(normed_inputs, patched_masks)
+
 
         # Reshape 输出为 [B, N, 128, num_quantiles]
         output_ts = output_ts.reshape(
@@ -247,52 +279,79 @@ class TimesFM2p5ForTraining(nn.Module):
         # 反归一化输出
         if self.use_revin_denorm:
             output_ts = self.timesfm_util.revin(output_ts, context_mu, context_sigma, reverse=True)
+            output_quantile_spread = self.timesfm_util.revin(output_quantile_spread, context_mu, context_sigma, reverse=True)
+        
+        full_quantile_spread = output_quantile_spread[:, hist_last_patch_idx, :]
+        total_horizon = full_quantile_spread.shape[-1]
+        num_future_patches = total_horizon//self.num_quantiles // self.output_patch_len
+        quantile_spread_patches = full_quantile_spread.reshape(
+            batch_size,
+            num_future_patches,
+            self.output_patch_len,
+            self.num_quantiles,
+        )
         
         # 提取点预测 (Point Forecast) -> [B, N, 128]
-        pred_full_horizon = output_ts[:, :, :, 0]
-        target_start_idx = self.patch_len
-        source_for_targets = full_series[:, target_start_idx:]
-        mask_for_targets = full_valid[:, target_start_idx:]
-        
+        target_start = hist_len
+        pred_start_idx = hist_last_patch_idx
+        source_for_targets = full_series[:, target_start:valid_len]
+        mask_for_targets = full_valid[:, target_start:valid_len]
+        source_for_MSE = full_series[:, self.patch_len:]
+        mask_for_MSE = full_valid[:, self.patch_len:]
         if source_for_targets.shape[1] < self.output_patch_len:
              raise ValueError(f"Sequence too short for output length {self.output_patch_len}")
         targets_unfolded = source_for_targets.unfold(1, self.output_patch_len, self.patch_len)
         masks_unfolded = mask_for_targets.unfold(1, self.output_patch_len, self.patch_len)
-        
-        min_patches = min(pred_full_horizon.shape[1], targets_unfolded.shape[1])
-        
-        pred_aligned = pred_full_horizon[:, :min_patches, :]
+        mse_source_unfolded = source_for_MSE.unfold(1, self.output_patch_len, self.patch_len)
+        mse_masks_unfolded = mask_for_MSE.unfold(1, self.output_patch_len, self.patch_len)
+        pred_available = output_ts.shape[1] - pred_start_idx
+        target_available = targets_unfolded.shape[1]
+        min_patches = min(pred_available, target_available)
+        min_patch_mse = min(output_ts.shape[1], mse_source_unfolded.shape[1])
+        pred_aligned = output_ts[:, pred_start_idx:pred_start_idx + min_patches, :, :].clone()
+        continuous_quantile_patches = min(min_patches, quantile_spread_patches.shape[1])
+
+        for quantile_index in [1, 2, 3, 4, 6, 7, 8, 9]:
+            pred_aligned[:, :continuous_quantile_patches, :, quantile_index] = (
+                quantile_spread_patches[:, :continuous_quantile_patches, :self.output_patch_len, quantile_index]
+                - quantile_spread_patches[:, :continuous_quantile_patches, :self.output_patch_len, self.decode_index]
+                + pred_aligned[:, :continuous_quantile_patches, :self.output_patch_len, self.decode_index]
+            )
+        pred_aligned_mean = output_ts[:, :min_patch_mse, :, self.decode_index]
         targets_aligned = targets_unfolded[:, :min_patches, :]
         masks_aligned = masks_unfolded[:, :min_patches, :]
-
+        targets_aligned_mse = mse_source_unfolded[:, :min_patch_mse, :]
+        masks_aligned_mse = mse_masks_unfolded[:, :min_patch_mse, :]
+        
         # 7. 计算 Loss
-        point_loss = (pred_aligned - targets_aligned) ** 2
+        point_loss = (pred_aligned_mean - targets_aligned_mse) ** 2
         
         # 应用 Mask (包括原始数据的 mask 和 边界不足导致的截断)
-        weighted_loss = point_loss * masks_aligned
-        valid_count = torch.clamp(masks_aligned.sum(), min=1.0)
+        weighted_loss = point_loss * masks_aligned_mse
+        valid_count = torch.clamp(masks_aligned_mse.sum(), min=1.0)
         train_loss = weighted_loss.sum() / valid_count
         quantile_loss_sum = train_loss.new_zeros(())
         loss = train_loss
 
         # 8. 分位数 Loss (Optional)
         if self.use_quantile_loss:
-            quantile_preds = output_ts[:, :min_patches, :, 1:] # [B, N, 128, Q]
-            quantile_targets = targets_aligned.unsqueeze(-1)   # [B, N, 128, 1]
-            quantile_masks = masks_aligned.unsqueeze(-1)       # [B, N, 128, 1]
+            quantile_preds = pred_aligned[:, :continuous_quantile_patches, :, 1:] # [B, N, 128, Q]
+            quantile_targets = targets_aligned[:, :continuous_quantile_patches, :].unsqueeze(-1)   # [B, N, 128, 1]
+            quantile_masks = masks_aligned[:, :continuous_quantile_patches, :].unsqueeze(-1)       # [B, N, 128, 1]
+            quantile_valid_count = torch.clamp(quantile_masks.sum(), min=1.0)
 
             for q_idx, q_val in enumerate(self.quantiles):
                 q_pred = quantile_preds[:, :, :, q_idx]
                 q_loss = self._quantile_loss(q_pred, quantile_targets[..., 0], q_val)
-                quantile_loss_sum += (q_loss * quantile_masks[..., 0]).sum() / valid_count
+                quantile_loss_sum += (q_loss * quantile_masks[..., 0]).sum() / quantile_valid_count
 
             loss = train_loss + self.quantile_loss_weight * quantile_loss_sum
         if not return_dict:
-            return (loss, pred_aligned, train_loss, quantile_loss_sum)
+            return (loss, pred_aligned_mean, train_loss, quantile_loss_sum)
 
         return TimesFM2p5CausalLMOutput(
             loss=loss,
-            logits=pred_aligned, # 返回对齐后的预测值
+            logits=pred_aligned_mean, # 返回对齐后的预测值
             train_loss=train_loss,
             quantile_loss_sum=quantile_loss_sum,
         )

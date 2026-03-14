@@ -115,13 +115,13 @@ exec python torch_dist_run.py main.py \
     --dataloader_num_workers 16 \
     --warmup_ratio 0.03 \
     --lr_scheduler_type cosine  \
-    --cosine_num_cycles 2.0 \
-    --learning_rate 1e-3 \
+    --cosine_num_cycles 0.5 \
+    --learning_rate 5e-4 \
     --min_learning_rate 1e-5 \
     --weight_decay 0.05 \
     --ddp_timeout 7200 \
     --precision bf16 \
-    --num_train_epochs 15 \
-    --output_path logs_2/time_moe3 \
+    --num_train_epochs 30 \
+    --output_path logs_2/time_moe7 \
     --attn_implementation flash_attention_2 \
     --ddp_find_unused_parameters
