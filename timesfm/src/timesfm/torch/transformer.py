@@ -137,26 +137,43 @@ def _torch_dot_product_attention(query, key, value, mask=None):
   but using the fast and fused F.scaled_dot_product_attention kernel.
   """
 
+#   return _dot_product_attention(query, key, value, mask)
+
+  safe_mask = mask
+  fully_masked_rows = None
+  if mask is not None:
+    # F.scaled_dot_product_attention can emit NaNs, and more importantly NaN
+    # gradients, when any query row is fully masked. Keep the fused kernel by
+    # opening a single dummy key for those rows, then zero their outputs.
+    fully_masked_rows = ~mask.any(dim=-1, keepdim=True)
+    if fully_masked_rows.any():
+      dummy_key_mask = torch.zeros_like(mask)
+      dummy_key_mask[..., 0] = True
+      safe_mask = mask | (fully_masked_rows & dummy_key_mask)
+
+  attention_dtype = value.dtype
+  if query.dtype != attention_dtype:
+    query = query.to(attention_dtype)
+  if key.dtype != attention_dtype:
+    key = key.to(attention_dtype)
+
   # 1. Permute inputs from (B, L, H, D) to the expected (B, H, L, D)
   query = query.permute(0, 2, 1, 3)
   key = key.permute(0, 2, 1, 3)
   value = value.permute(0, 2, 1, 3)
 
-  target_dtype = value.dtype
-  if query.dtype != target_dtype:
-    query = query.to(target_dtype)
-  if key.dtype != target_dtype:
-    key = key.to(target_dtype)
-
   # 2. Call the fused attention kernel
   #    - Pass the mask to `attn_mask`.
   #    - Set `scale=1.0` to disable the default 1/sqrt(d_k) scaling.
-  output = F.scaled_dot_product_attention(query, key, value, attn_mask=mask, scale=1.0)
+  output = F.scaled_dot_product_attention(query, key, value, attn_mask=safe_mask, scale=1.0)
+
+  if fully_masked_rows is not None and fully_masked_rows.any():
+    output = output.masked_fill(fully_masked_rows, 0.0)
 
   # 3. Permute the output back to the original (B, L, H, D) layout
   output = output.permute(0, 2, 1, 3)
 
-  return torch.where(output.isnan(), 0., output)
+  return output
 
 
 class PerDimScale(nn.Module):

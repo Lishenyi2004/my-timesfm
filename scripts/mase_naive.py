@@ -3,7 +3,7 @@ import numpy as np
 from scipy.stats import gmean
 
 # 1. 读取你提供的 TimesFM-2.5 原始结果
-df_model = pd.read_csv('/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE/gift-eval/results/timesfm_change13/all_results.csv')
+df_model = pd.read_csv('/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE/logs_2/time_moe11/best_model/all_results.csv')
 
 # 2. 读取官方的 seasonal_naive 基准结果 (需从官方 GitHub/HuggingFace 仓库下载)
 df_naive = pd.read_csv('/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE/gift-eval/results/seasonal_naive/all_results.csv')

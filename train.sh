@@ -91,7 +91,7 @@ export NCCL_DEBUG=WARN
 # 3. 启动训练
 # ===================================================
 cd /mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE
-DATA_PATH="/mnt/shared-storage-gpfs2/speechllm-share/data/Time-300B/datasets--Maple728--Time-300B/snapshots/b52d0ca9de8da5202f73a5057681fca6b48906fb"
+DATA_PATH="/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/datasets/time300b/b52d0ca9de8da5202f73a5057681fca6b48906fb_nature_filtered_symlinks"
 
 echo "---------------------------------------"
 echo "启动命令: python torch_dist_run.py main.py"
@@ -104,7 +104,7 @@ echo "---------------------------------------"
 exec python torch_dist_run.py main.py \
     -d "$DATA_PATH" \
     --from_scratch \
-    --global_batch_size 65536 \
+    --global_batch_size 16384 \
     --micro_batch_size 1024 \
     --deepspeed ds_config_zero1.json \
     --evaluation_strategy steps \
@@ -112,16 +112,16 @@ exec python torch_dist_run.py main.py \
     --save_strategy steps \
     --save_steps 2000 \
     --load_best_model_at_end \
-    --dataloader_num_workers 16 \
+    --dataloader_num_workers 4 \
     --warmup_ratio 0.03 \
     --lr_scheduler_type cosine  \
     --cosine_num_cycles 0.5 \
-    --learning_rate 5e-4 \
+    --learning_rate 1e-4 \
     --min_learning_rate 1e-5 \
     --weight_decay 0.05 \
     --ddp_timeout 7200 \
     --precision bf16 \
-    --num_train_epochs 30 \
-    --output_path logs_2/time_moe7 \
+    --num_train_epochs 15 \
+    --output_path logs_2/time300b_less \
     --attn_implementation flash_attention_2 \
     --ddp_find_unused_parameters

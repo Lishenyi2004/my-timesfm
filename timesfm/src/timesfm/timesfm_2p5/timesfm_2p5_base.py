@@ -95,16 +95,16 @@ class TimesFM_2p5_200M_Definition:
   decode_index: int = 5
   tokenizer: ResidualBlockConfig = ResidualBlockConfig(
     input_dims=64,
-    hidden_dims=1536,
-    output_dims=1536,
+    hidden_dims=1920,
+    output_dims=1920,
     use_bias=True,
     activation="swish",
   )
   stacked_transformers: StackedTransformersConfig = StackedTransformersConfig(
-    num_layers=24,
+    num_layers=20,
     transformer=TransformerConfig(
-      model_dims=1536,
-      hidden_dims=6144,
+      model_dims=1920,
+      hidden_dims=1920,
       num_heads=24,
       attention_norm="rms",
       feedforward_norm="rms",
@@ -116,15 +116,15 @@ class TimesFM_2p5_200M_Definition:
     ),
   )
   output_projection_point: ResidualBlockConfig = ResidualBlockConfig(
-    input_dims=1536,
-    hidden_dims=1536,
+    input_dims=1920,
+    hidden_dims=1920,
     output_dims=1280,
     use_bias=False,
     activation="swish",
   )
   output_projection_quantiles: ResidualBlockConfig = ResidualBlockConfig(
-    input_dims=1536,
-    hidden_dims=1536,
+    input_dims=1920,
+    hidden_dims=1920,
     output_dims=10240,
     use_bias=False,
     activation="swish",

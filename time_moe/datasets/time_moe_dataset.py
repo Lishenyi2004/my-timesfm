@@ -10,11 +10,15 @@ from .binary_dataset import BinaryDataset
 
 class TimeMoEDataset(TimeSeriesDataset):
 
-    def __init__(self, data_folder, normalization_method=None):
+    def __init__(self, data_folder, normalization_method=None, max_sequences=None):
         self.data_folder = data_folder
         self.normalization_method = normalization_method
+        self.max_sequences = None if max_sequences is None else int(max_sequences)
         self.datasets = []
         self.num_tokens = None
+
+        if self.max_sequences is not None and self.max_sequences <= 0:
+            raise ValueError(f'max_sequences should be positive, but got {self.max_sequences}')
 
         if normalization_method is None:
             self.normalization_method = None
@@ -39,6 +43,8 @@ class TimeMoEDataset(TimeSeriesDataset):
         else:
             # walk through the data_folder
             for root, dirs, files in os.walk(self.data_folder):
+                dirs.sort()
+                files.sort()
                 for file in files:
                     fn_path = os.path.join(root, file)
                     if file != BinaryDataset.meta_file_name and GeneralDataset.is_valid_path(fn_path):
@@ -57,14 +63,18 @@ class TimeMoEDataset(TimeSeriesDataset):
             self.cumsum_lengths.append(
                 self.cumsum_lengths[-1] + len(ds)
             )
-        self.num_sequences = self.cumsum_lengths[-1]
+        self.total_num_sequences = self.cumsum_lengths[-1]
+        if self.max_sequences is None:
+            self.num_sequences = self.total_num_sequences
+        else:
+            self.num_sequences = min(self.total_num_sequences, self.max_sequences)
 
     def __len__(self):
         return self.num_sequences
 
     def __getitem__(self, seq_idx):
-        if seq_idx >= self.cumsum_lengths[-1]:
-            raise ValueError(f'Index out of the dataset length: {seq_idx} >= {self.cumsum_lengths[-1]}')
+        if seq_idx >= self.num_sequences:
+            raise ValueError(f'Index out of the dataset length: {seq_idx} >= {self.num_sequences}')
         elif seq_idx < 0:
             raise ValueError(f'Index out of the dataset length: {seq_idx} < 0')
 
@@ -77,8 +87,8 @@ class TimeMoEDataset(TimeSeriesDataset):
         return seq
 
     def get_sequence_length_by_idx(self, seq_idx):
-        if seq_idx >= self.cumsum_lengths[-1]:
-            raise ValueError(f'Index out of the dataset length: {seq_idx} >= {self.cumsum_lengths[-1]}')
+        if seq_idx >= self.num_sequences:
+            raise ValueError(f'Index out of the dataset length: {seq_idx} >= {self.num_sequences}')
         elif seq_idx < 0:
             raise ValueError(f'Index out of the dataset length: {seq_idx} < 0')
 
@@ -88,7 +98,10 @@ class TimeMoEDataset(TimeSeriesDataset):
 
     def get_num_tokens(self):
         if self.num_tokens is None:
-            self.num_tokens = sum([ds.get_num_tokens() for ds in self.datasets])
+            if self.num_sequences == self.total_num_sequences:
+                self.num_tokens = sum([ds.get_num_tokens() for ds in self.datasets])
+            else:
+                self.num_tokens = sum([self.get_sequence_length_by_idx(i) for i in range(self.num_sequences)])
 
         return self.num_tokens
 

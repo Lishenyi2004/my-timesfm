@@ -1,17 +1,17 @@
-JOB_NAME="time-moe-train8"
+JOB_NAME="time-moe-train-100"
 WORKDIR="/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE"
 TRAIN_SCRIPT="${WORKDIR}/train.sh"
 
 # 资源配置
 GPU_PER_NODE=8
-NUM_NODES=8
-NAMESPACE="ailab-speechllm2"
-CHARGED_GROUP="speechllm2_gpu"
+NUM_NODES=4
+NAMESPACE="ailab-brainllm"
+CHARGED_GROUP="brainllm_gpu"
 
 # 计算资源
 GPU=$GPU_PER_NODE
-CPU=$((GPU * 16))
-MEMORY=$((GPU * 2 * 120000))
+CPU=$((GPU * 14))
+MEMORY=$((12  * 120000))
 
 rjob submit \
     --gpu=$GPU \

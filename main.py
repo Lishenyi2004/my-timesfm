@@ -28,8 +28,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max_length",
         type=int,
-        default=1024,
-        help="Maximum sequence length for training. Default: 1024",
+        default=512,
+        help="Maximum sequence length for training. Default: 512",
     )
     parser.add_argument(
         "--stride",
@@ -92,7 +92,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--quantile_loss_weight",
         type=float,
-        default=0.2,
+        default=1,
         help="weight for quantile loss term when enabled",
     )
     parser.add_argument(
@@ -118,6 +118,12 @@ if __name__ == "__main__":
         action=argparse.BooleanOptionalAction,
         default=True,
         help="enable ReVIN normalization on input patches",
+    )
+    parser.add_argument(
+        "--use_gt",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="enable ground truth",
     )
     parser.add_argument(
         "--use_revin_denorm",
@@ -240,6 +246,7 @@ if __name__ == "__main__":
         default=4,
         help="number of workers for dataloader",
     )
+
     parser.add_argument(
         "--ddp_timeout",
         type=int,
@@ -298,6 +305,7 @@ if __name__ == "__main__":
         timesfm_num_heads=args.timesfm_num_heads,
         timesfm_model_dims=args.timesfm_model_dims,
         use_revin_norm=args.use_revin_norm,
+        use_gt=args.use_gt,
         use_revin_denorm=args.use_revin_denorm,
         gradient_checkpointing=args.gradient_checkpointing,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,

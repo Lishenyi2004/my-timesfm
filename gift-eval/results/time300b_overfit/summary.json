@@ -1,0 +1,29 @@
+{
+  "model": "TimesFM-2.5",
+  "checkpoint": "/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE/logs_2/TEST/checkpoint-2980/model.safetensors",
+  "data_path": "/mnt/shared-storage-gpfs2/speechllm-share/data/Time-300B/datasets--Maple728--Time-300B/snapshots/b52d0ca9de8da5202f73a5057681fca6b48906fb",
+  "num_series": 100,
+  "prediction_length": 128,
+  "min_context_length": 128,
+  "max_context_length": 4096,
+  "mase_seasonality": 1,
+  "normalization_method": "zero",
+  "metrics": {
+    "mse": 0.509089469909668,
+    "mae": 0.5529442429542542,
+    "mase": 2.3716180068442356,
+    "rmse": 0.7135050594842814,
+    "nd": 0.649414393179127,
+    "smape": 0.9399738907814026,
+    "quantile_loss_q10": 0.24756021797657013,
+    "quantile_loss_q20": 0.38140854239463806,
+    "quantile_loss_q30": 0.47530436515808105,
+    "quantile_loss_q40": 0.5300222039222717,
+    "quantile_loss_q50": 0.5529442429542542,
+    "quantile_loss_q60": 0.5533172488212585,
+    "quantile_loss_q70": 0.5178320407867432,
+    "quantile_loss_q80": 0.4443570375442505,
+    "quantile_loss_q90": 0.31546616554260254,
+    "mean_quantile_loss": 0.44646800723340774
+  }
+}
