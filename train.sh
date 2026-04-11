@@ -104,15 +104,14 @@ echo "---------------------------------------"
 exec python torch_dist_run.py main.py \
     -d "$DATA_PATH" \
     --from_scratch \
-    --global_batch_size 16384 \
+    --global_batch_size 24576 \
     --micro_batch_size 1024 \
-    --deepspeed ds_config_zero1.json \
     --evaluation_strategy steps \
-    --eval_steps 2000 \
+    --eval_steps 4000 \
     --save_strategy steps \
-    --save_steps 2000 \
+    --save_steps 4000 \
     --load_best_model_at_end \
-    --dataloader_num_workers 4 \
+    --dataloader_num_workers 8 \
     --warmup_ratio 0.03 \
     --lr_scheduler_type cosine  \
     --cosine_num_cycles 0.5 \
@@ -122,6 +121,7 @@ exec python torch_dist_run.py main.py \
     --ddp_timeout 7200 \
     --precision bf16 \
     --num_train_epochs 15 \
-    --output_path logs_2/time300b_less \
+    --normalization_method none \
+    --output_path logs_2/time300b_flict_fix_A \
     --attn_implementation flash_attention_2 \
-    --ddp_find_unused_parameters
+    --no-ddp_find_unused_parameters

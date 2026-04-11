@@ -49,6 +49,9 @@ class TimeMoeRunner:
                     timesfm_model_dims=kwargs.get('timesfm_model_dims'),
                     use_revin_norm=kwargs.get('use_revin_norm', True),
                     use_revin_denorm=kwargs.get('use_revin_denorm', True),
+                    enable_overfit_fixed_window=kwargs.get('enable_overfit_fixed_window', False),
+                    overfit_hist_length=kwargs.get('overfit_hist_length', 384),
+                    overfit_gt_length=kwargs.get('overfit_gt_length', 128),
                 )
             else:
                 model = TimesFM2p5ForTraining.from_pretrained(
@@ -61,6 +64,9 @@ class TimeMoeRunner:
                     timesfm_model_dims=kwargs.get('timesfm_model_dims'),
                     use_revin_norm=kwargs.get('use_revin_norm', True),
                     use_revin_denorm=kwargs.get('use_revin_denorm', True),
+                    enable_overfit_fixed_window=kwargs.get('enable_overfit_fixed_window', False),
+                    overfit_hist_length=kwargs.get('overfit_hist_length', 384),
+                    overfit_gt_length=kwargs.get('overfit_gt_length', 128),
                 )
             return model
 
@@ -96,7 +102,9 @@ class TimeMoeRunner:
         # return model
 
     def train_model(self, from_scratch: bool = False, **kwargs):
-        setup_seed(self.seed)
+        rank_for_seed = int(os.getenv('RANK', '0'))
+        model_seed = int(self.seed) + rank_for_seed
+        setup_seed(model_seed)
 
         train_config = kwargs
 
@@ -108,6 +116,7 @@ class TimeMoeRunner:
             f'WORLD_SIZE={os.getenv("WORLD_SIZE")}',
             f'LOCAL_WORLD_SIZE={os.getenv("LOCAL_WORLD_SIZE")}',
             f'Detected num_devices={num_devices}',
+            f'Model seed per rank={model_seed} (base_seed={self.seed}, rank_offset={rank_for_seed})',
         )
 
         global_batch_size = train_config.get('global_batch_size', None)
@@ -218,7 +227,7 @@ class TimeMoeRunner:
             log_on_each_node=False,
             logging_steps=int(train_config.get('logging_steps', 1)),
             report_to=train_config.get('report_to', ['tensorboard']),
-            seed=self.seed,
+            seed=model_seed,
             data_seed=self.seed,
             max_grad_norm=train_config.get('max_grad_norm', 1.0),
             optim=train_config.get('optim', 'adamw_torch'),
@@ -251,6 +260,9 @@ class TimeMoeRunner:
                 timesfm_model_dims=train_config.get('timesfm_model_dims'),
                 use_revin_norm=bool(train_config.get('use_revin_norm', True)),
                 use_revin_denorm=bool(train_config.get('use_revin_denorm', True)),
+                enable_overfit_fixed_window=bool(train_config.get('enable_overfit_fixed_window', False)),
+                overfit_hist_length=int(train_config.get('overfit_hist_length', 384)),
+                overfit_gt_length=int(train_config.get('overfit_gt_length', 128)),
                 attn_implementation=train_config.get('attn_implementation', 'eager'),
             )
             log_in_local_rank_0(f'Load model parameters from: {model_path}')
@@ -278,6 +290,7 @@ class TimeMoeRunner:
             normalization_method=train_config["normalization_method"],
             validation_split_ratio=validation_split_ratio,
             enable_validation_split=enable_validation_split,
+            max_train_sequences=train_config.get('max_train_sequences'),
         )
 
         if eval_ds is not None:
@@ -382,9 +395,14 @@ class TimeMoeRunner:
             normalization_method,
             validation_split_ratio: float = 0.01,
             enable_validation_split: bool = True,
+            max_train_sequences: int = None,
     ):
         log_in_local_rank_0('Loading dataset...')
-        dataset = TimeMoEDataset(data_path, normalization_method=normalization_method)
+        dataset = TimeMoEDataset(
+            data_path,
+            normalization_method=normalization_method,
+            max_sequences=max_train_sequences,
+        )
         log_in_local_rank_0('Processing dataset to fixed-size sub-sequences...')
         window_dataset = TimeMoEWindowDataset(
             dataset,

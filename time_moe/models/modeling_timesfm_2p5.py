@@ -34,6 +34,9 @@ class TimesFM2p5TrainingConfig(PretrainedConfig):
         use_revin_norm: bool = True,
         use_gt: bool = True,
         use_revin_denorm: bool = True,
+        enable_overfit_fixed_window: bool = False,
+        overfit_hist_length: int = 384,
+        overfit_gt_length: int = 128,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -49,6 +52,9 @@ class TimesFM2p5TrainingConfig(PretrainedConfig):
         self.use_revin_norm = use_revin_norm
         self.use_revin_denorm = use_revin_denorm
         self.use_gt = use_gt
+        self.enable_overfit_fixed_window = bool(enable_overfit_fixed_window)
+        self.overfit_hist_length = int(overfit_hist_length)
+        self.overfit_gt_length = int(overfit_gt_length)
 
 
 class TimesFM2p5ForTraining(nn.Module):
@@ -63,6 +69,9 @@ class TimesFM2p5ForTraining(nn.Module):
         use_revin_norm: bool = True,
         use_gt: bool = True,
         use_revin_denorm: bool = True,
+        enable_overfit_fixed_window: bool = False,
+        overfit_hist_length: int = 384,
+        overfit_gt_length: int = 128,
     ):
         super().__init__()
         self._ensure_timesfm_importable()
@@ -80,6 +89,9 @@ class TimesFM2p5ForTraining(nn.Module):
         self.use_revin_norm = bool(use_revin_norm)
         self.use_revin_denorm = bool(use_revin_denorm)
         self.use_gt = bool(use_gt)
+        self.enable_overfit_fixed_window = bool(enable_overfit_fixed_window)
+        self.overfit_hist_length = int(overfit_hist_length)
+        self.overfit_gt_length = int(overfit_gt_length)
 
         self.patch_len = self.backbone.p
         self.output_patch_len = self.backbone.o
@@ -101,6 +113,9 @@ class TimesFM2p5ForTraining(nn.Module):
             use_revin_norm=self.use_revin_norm,
             use_revin_denorm=self.use_revin_denorm,
             use_gt=self.use_gt,
+            enable_overfit_fixed_window=self.enable_overfit_fixed_window,
+            overfit_hist_length=self.overfit_hist_length,
+            overfit_gt_length=self.overfit_gt_length,
         )
 
         if torch_dtype is not None:
@@ -126,6 +141,9 @@ class TimesFM2p5ForTraining(nn.Module):
         use_revin_norm: bool = True,
         use_revin_denorm: bool = True,
         use_gt: bool = True,
+        enable_overfit_fixed_window: bool = False,
+        overfit_hist_length: int = 384,
+        overfit_gt_length: int = 128,
     ):
         model = cls(
             torch_dtype=torch_dtype,
@@ -137,6 +155,9 @@ class TimesFM2p5ForTraining(nn.Module):
             use_revin_norm=use_revin_norm,
             use_revin_denorm=use_revin_denorm,
             use_gt=use_gt,
+            enable_overfit_fixed_window=enable_overfit_fixed_window,
+            overfit_hist_length=overfit_hist_length,
+            overfit_gt_length=overfit_gt_length,
         )
         weight_path = model._resolve_weight_path(model_path)
 
@@ -190,6 +211,11 @@ class TimesFM2p5ForTraining(nn.Module):
         loss_second = -dev * (1.0 - quantile)
         return 2.0 * torch.where(loss_first >= 0, loss_first, loss_second)
 
+    @staticmethod
+    def _flip_quantile_dim(x: torch.Tensor) -> torch.Tensor:
+        # Keep index 0 (mean) unchanged and reverse quantile dimensions.
+        return torch.cat([x[..., :1], torch.flip(x[..., 1:], dims=(-1,))], dim=-1)
+
     def forward(
         self,
         input_ids: torch.FloatTensor = None,
@@ -224,49 +250,62 @@ class TimesFM2p5ForTraining(nn.Module):
             # 截断多余的部分，保证是 patch_len 的倍数
             valid_len = num_patches * self.patch_len
             input_series = full_series[:, :valid_len]
+
             input_mask_series = full_valid[:, :valid_len].clone()
             if num_patches < 2:
                 raise ValueError(f"Sequence too short: need at least 2 patches, got {num_patches}")
 
-    
-            first_patch_mask_end = torch.randint(
-                low=0,
-                high=self.patch_len,
-                size=(batch_size,),
-                device=device,
-            )
-            first_patch_positions = torch.arange(self.patch_len, device=device).unsqueeze(0)
-            first_patch_prefix_mask = first_patch_positions <= first_patch_mask_end.unsqueeze(1)
-            input_mask_series[:, :self.patch_len] = input_mask_series[:, :self.patch_len] * torch.logical_not(
-                first_patch_prefix_mask
-            ).to(dtype=input_mask_series.dtype)
+            if self.enable_overfit_fixed_window:
+                if self.overfit_hist_length <= 0 or self.overfit_gt_length <= 0:
+                    raise ValueError(
+                        'overfit_hist_length and overfit_gt_length must be positive when enable_overfit_fixed_window=True'
+                    )
+                if self.overfit_hist_length % self.patch_len != 0:
+                    raise ValueError(
+                        f'overfit_hist_length must be multiple of patch_len={self.patch_len}, got {self.overfit_hist_length}'
+                    )
+                fixed_total_len = self.overfit_hist_length + self.overfit_gt_length
+                if fixed_total_len > valid_len:
+                    raise ValueError(
+                        f'Sequence too short for overfit fixed window: valid_len={valid_len}, required={fixed_total_len}'
+                    )
+                hist_len = self.overfit_hist_length
+                hist_last_patch_idx = (hist_len // self.patch_len) - 1
+            else:
+                max_hist_last_patch_idx = num_patches - 4
+                if max_hist_last_patch_idx <= 0:
+                    raise ValueError(
+                        f"Sequence too short for random hist/gt split: num_patches={num_patches}, require >=5"
+                    )
+                hist_last_patch_idx = torch.randint(
+                    low=3,
+                    high=max_hist_last_patch_idx,
+                    size=(1,),
+                    device=device,
+                ).item()
+                hist_len = (hist_last_patch_idx + 1) * self.patch_len
 
+            # 使用 hist 统计量（整段序列而非逐 patch）对 hist/gt 统一归一化，再拼接回单条序列
+            hist_series = input_series[:, :hist_len]
+            gt_series = input_series[:, hist_len:valid_len]
+            hist_mask_series = input_mask_series[:, :hist_len]
 
-            max_hist_last_patch_idx = num_patches - 4
-            if max_hist_last_patch_idx <= 0:
-                raise ValueError(
-                    f"Sequence too short for random hist/gt split: num_patches={num_patches}, require >=5"
-                )
-            hist_last_patch_idx = torch.randint(
-                low=0,
-                high=max_hist_last_patch_idx,
-                size=(1,),
-                device=device,
-            ).item()
-            hist_len = (hist_last_patch_idx + 1) * self.patch_len
+            hist_valid_count = torch.clamp(hist_mask_series.sum(dim=1, keepdim=True), min=1.0)
+            hist_mu = (hist_series * hist_mask_series).sum(dim=1, keepdim=True) / hist_valid_count
+            hist_var = ((hist_series - hist_mu) ** 2 * hist_mask_series).sum(dim=1, keepdim=True) / hist_valid_count
+            hist_sigma = torch.sqrt(torch.clamp(hist_var, min=1e-8))
 
-            hist = full_series[:, :hist_len]
-            gt = full_series[:, hist_len:valid_len]
-
-            hist_valid = full_valid[:, :hist_len]
-            gt_valid = full_valid[:, hist_len:valid_len]
+            hist_series = (hist_series - hist_mu) / hist_sigma
+            gt_series = (gt_series - hist_mu) / hist_sigma
+            input_series = torch.cat([hist_series, gt_series], dim=1)
 
             # 3. 构建 Input Patches [B, N, 32]
             patched_inputs = input_series.reshape(batch_size, num_patches, self.patch_len)
             patched_masks = torch.logical_not(
                 input_mask_series.reshape(batch_size, num_patches, self.patch_len).bool()
             )
-            # 4. 获取统计量并归一化输入
+
+            # 4. 正向分支：统计量与归一化
             context_mu, context_sigma = self._get_patch_stats(patched_inputs, patched_masks)
             if self.use_revin_norm:
                 normed_inputs = self.timesfm_util.revin(patched_inputs, context_mu, context_sigma, reverse=False)
@@ -276,9 +315,48 @@ class TimesFM2p5ForTraining(nn.Module):
             model_dtype = next(self.backbone.parameters()).dtype
             normed_inputs = normed_inputs.to(dtype=model_dtype)
 
+            # 4.1 负向分支：独立统计量与归一化（对 -x 单独计算）
+            neg_patched_inputs = -patched_inputs
+            neg_context_mu, neg_context_sigma = self._get_patch_stats(neg_patched_inputs, patched_masks)
+            if self.use_revin_norm:
+                neg_normed_inputs = self.timesfm_util.revin(
+                    neg_patched_inputs,
+                    neg_context_mu,
+                    neg_context_sigma,
+                    reverse=False,
+                )
+            else:
+                neg_normed_inputs = neg_patched_inputs
+            neg_normed_inputs = torch.where(patched_masks, 0.0, neg_normed_inputs)
+            neg_normed_inputs = neg_normed_inputs.to(dtype=model_dtype)
+
             # 5. 模型前向传播
             (_, _, output_ts, output_quantile_spread), _ = self.backbone(normed_inputs, patched_masks)
+            (_, _, flipped_output_ts, flipped_output_quantile_spread), _ = self.backbone(
+                neg_normed_inputs, patched_masks
+            )
 
+            # 5.1 在 reshape 前先反归一化（与 debug 流程一致）
+            if self.use_revin_denorm:
+                output_ts = self.timesfm_util.revin(output_ts, context_mu, context_sigma, reverse=True)
+                output_quantile_spread = self.timesfm_util.revin(
+                    output_quantile_spread,
+                    context_mu,
+                    context_sigma,
+                    reverse=True,
+                )
+                flipped_output_ts = self.timesfm_util.revin(
+                    flipped_output_ts,
+                    neg_context_mu,
+                    neg_context_sigma,
+                    reverse=True,
+                )
+                flipped_output_quantile_spread = self.timesfm_util.revin(
+                    flipped_output_quantile_spread,
+                    neg_context_mu,
+                    neg_context_sigma,
+                    reverse=True,
+                )
 
             # Reshape 输出为 [B, N, 128, num_quantiles]
             output_ts = output_ts.reshape(
@@ -287,11 +365,42 @@ class TimesFM2p5ForTraining(nn.Module):
                 self.output_patch_len,
                 self.num_quantiles,
             )
+            flipped_output_ts = flipped_output_ts.reshape(
+                batch_size,
+                num_patches,
+                self.output_patch_len,
+                self.num_quantiles,
+            )
+
+            # Apply force-flip-invariance in normalized space:
+            # f(x) <- 0.5 * (f(x) - flip_quantile(f(-x)))
+            output_quantile_spread = output_quantile_spread.reshape(
+                batch_size,
+                num_patches,
+                -1,
+                self.num_quantiles,
+            )
+            flipped_output_quantile_spread = flipped_output_quantile_spread.reshape(
+                batch_size,
+                num_patches,
+                -1,
+                self.num_quantiles,
+            )
+
+            # 6. 翻转分位数后做相减取平均
+            flipped_output_ts = self._flip_quantile_dim(flipped_output_ts)
+            output_ts = 0.5 * (output_ts - flipped_output_ts)
             
-            # 反归一化输出
-            if self.use_revin_denorm:
-                output_ts = self.timesfm_util.revin(output_ts, context_mu, context_sigma, reverse=True)
-                output_quantile_spread = self.timesfm_util.revin(output_quantile_spread, context_mu, context_sigma, reverse=True)
+            flipped_output_quantile_spread = self._flip_quantile_dim(flipped_output_quantile_spread)
+            output_quantile_spread = 0.5 * (
+                output_quantile_spread - flipped_output_quantile_spread
+            )
+            # Keep downstream logic unchanged (expects [B, N, 1024 * num_quantiles]).
+            output_quantile_spread = output_quantile_spread.reshape(
+                batch_size,
+                num_patches,
+                -1,
+            )
             
             full_quantile_spread = output_quantile_spread[:, hist_last_patch_idx, :]
             total_horizon = full_quantile_spread.shape[-1]
@@ -309,9 +418,13 @@ class TimesFM2p5ForTraining(nn.Module):
             # 提取点预测 (Point Forecast) -> [B, N, 128]
             target_start = hist_len
             pred_start_idx = hist_last_patch_idx
-            source_for_targets = full_series[:, target_start:valid_len]
-            mask_for_targets = full_valid[:, target_start:valid_len]
-            source_for_MSE = full_series[:, self.patch_len:]
+            if self.enable_overfit_fixed_window:
+                target_end = min(valid_len, hist_len + self.overfit_gt_length)
+            else:
+                target_end = valid_len
+            source_for_targets = input_series[:, target_start:target_end]
+            mask_for_targets = full_valid[:, target_start:target_end]
+            source_for_MSE = input_series[:, self.patch_len:]
             mask_for_MSE = full_valid[:, self.patch_len:]
             if source_for_targets.shape[1] < self.output_patch_len:
                 raise ValueError(f"Sequence too short for output length {self.output_patch_len}")
@@ -332,11 +445,13 @@ class TimesFM2p5ForTraining(nn.Module):
                     - quantile_spread_patches[:, :continuous_quantile_patches, :self.output_patch_len, self.decode_index]
                     + pred_aligned[:, :continuous_quantile_patches, :self.output_patch_len, self.decode_index]
                 )
-            pred_aligned_mean = output_ts[:, :min_patch_mse, :, 0]
+            pred_aligned_mean = output_ts[:, :min_patch_mse, :, self.decode_index]
             targets_aligned = targets_unfolded[:, :min_patches, :]
             masks_aligned = masks_unfolded[:, :min_patches, :]
             targets_aligned_mse = mse_source_unfolded[:, :min_patch_mse, :]
             masks_aligned_mse = mse_masks_unfolded[:, :min_patch_mse, :]
+
+
             
             # 7. 计算 Loss
             point_loss = (pred_aligned_mean - targets_aligned_mse) ** 2
@@ -398,19 +513,20 @@ class TimesFM2p5ForTraining(nn.Module):
             # 截断多余的部分，保证是 patch_len 的倍数
             valid_len = num_patches * self.patch_len
             input_series = full_series[:, :valid_len]
-            input_mask_series = full_valid[:, :valid_len]
-            
-            first_patch_mask_end = torch.randint(
-                low=0,
-                high=self.patch_len,
-                size=(batch_size,),
-                device=device,
-            )
-            first_patch_positions = torch.arange(self.patch_len, device=device).unsqueeze(0)
-            first_patch_prefix_mask = first_patch_positions <= first_patch_mask_end.unsqueeze(1)
-            input_mask_series[:, :self.patch_len] = input_mask_series[:, :self.patch_len] * torch.logical_not(
-                first_patch_prefix_mask
-            ).to(dtype=input_mask_series.dtype)
+            input_mask_series = full_valid[:, :valid_len].clone()
+
+            if not self.enable_overfit_fixed_window:
+                first_patch_mask_end = torch.randint(
+                    low=0,
+                    high=self.patch_len,
+                    size=(batch_size,),
+                    device=device,
+                )
+                first_patch_positions = torch.arange(self.patch_len, device=device).unsqueeze(0)
+                first_patch_prefix_mask = first_patch_positions <= first_patch_mask_end.unsqueeze(1)
+                input_mask_series[:, :self.patch_len] = input_mask_series[:, :self.patch_len] * torch.logical_not(
+                    first_patch_prefix_mask
+                ).to(dtype=input_mask_series.dtype)
             
             # 3. 构建 Input Patches [B, N, 32]
             patched_inputs = input_series.reshape(batch_size, num_patches, self.patch_len)

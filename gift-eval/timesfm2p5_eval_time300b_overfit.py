@@ -37,16 +37,16 @@ def parse_args():
     parser.add_argument(
         "--checkpoint-path",
         type=str,
-        default=str("/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE/timesfm-2.5-200m-pytorch"),
+        default=str("/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE/logs_2/time300b_overfit/checkpoint-5000"),
         help="Path to checkpoint dir or model.safetensors",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default=str(Path("results") / "time300b_overfit_original"),
+        default=str(Path("results") / "time300b_overfit_test"),
         help="Output directory for metrics and plots",
     )
-    parser.add_argument("--model-name", type=str, default="TimesFM-2.5-original")
+    parser.add_argument("--model-name", type=str, default="TimesFM-2.5")
     parser.add_argument(
         "--target-seq-idx",
         type=int,
@@ -63,13 +63,13 @@ def parse_args():
     parser.add_argument(
         "--train-max-length",
         type=int,
-        default=1024,
+        default=512,
         help="Training max_length used to construct one training window when sample-mode=train_window",
     )
     parser.add_argument(
         "--train-fixed-gt-length",
         type=int,
-        default=256,
+        default=128,
         help="Training fixed_gt_length used when sample-mode=train_window",
     )
     parser.add_argument(
@@ -118,7 +118,7 @@ def parse_args():
     )
     parser.add_argument("--torch-compile", action="store_true")
     parser.add_argument("--save-plots", action="store_true")
-    parser.add_argument("--plot-context-len", type=int, default=200)
+    parser.add_argument("--plot-context-len", type=int, default=1000)
     parser.add_argument("--max-plot-samples", type=int, default=16)
     return parser.parse_args()
 

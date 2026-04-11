@@ -131,6 +131,24 @@ if __name__ == "__main__":
         default=True,
         help="enable ReVIN de-normalization on output patches",
     )
+    parser.add_argument(
+        "--enable_overfit_fixed_window",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="disable random mask/split and use fixed hist/gt window for overfit",
+    )
+    parser.add_argument(
+        "--overfit_hist_length",
+        type=int,
+        default=384,
+        help="fixed history length when enable_overfit_fixed_window=True",
+    )
+    parser.add_argument(
+        "--overfit_gt_length",
+        type=int,
+        default=128,
+        help="fixed ground-truth length when enable_overfit_fixed_window=True",
+    )
 
     parser.add_argument(
         "--global_batch_size", type=int, default=64, help="global batch size"
@@ -246,6 +264,12 @@ if __name__ == "__main__":
         default=4,
         help="number of workers for dataloader",
     )
+    parser.add_argument(
+        "--max_train_sequences",
+        type=int,
+        default=None,
+        help="limit the number of source training sequences (use 1 to keep first sequence only)",
+    )
 
     parser.add_argument(
         "--ddp_timeout",
@@ -307,12 +331,16 @@ if __name__ == "__main__":
         use_revin_norm=args.use_revin_norm,
         use_gt=args.use_gt,
         use_revin_denorm=args.use_revin_denorm,
+        enable_overfit_fixed_window=args.enable_overfit_fixed_window,
+        overfit_hist_length=args.overfit_hist_length,
+        overfit_gt_length=args.overfit_gt_length,
         gradient_checkpointing=args.gradient_checkpointing,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
         deepspeed=args.deepspeed,
         logging_steps=args.logging_steps,
         max_grad_norm=args.max_grad_norm,
         dataloader_num_workers=args.dataloader_num_workers,
+        max_train_sequences=args.max_train_sequences,
         ddp_timeout=args.ddp_timeout,
         save_only_model=args.save_only_model,
         save_total_limit=args.save_total_limit,

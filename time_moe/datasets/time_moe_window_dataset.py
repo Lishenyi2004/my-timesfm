@@ -56,7 +56,7 @@ class TimeMoEWindowDataset:
         for seq_idx in iterator:
             n_points = self.dataset.get_sequence_length_by_idx(seq_idx)
             # Skip sequences with fewer than 2 points
-            if n_points < 2:
+            if n_points < 481:
                 continue
             self.sub_seq_indexes.append((seq_idx, 0))
             for offset_idx in range(
@@ -81,8 +81,8 @@ class TimeMoEWindowDataset:
         loss_mask = np.ones(len(seq) - 1, dtype=np.int32)
         n_pad = self.window_size_plus_one - len(seq)
         if n_pad > 0:
-            seq = np.pad(seq, (0, n_pad), 'constant', constant_values=0)
-            loss_mask = np.pad(loss_mask, (0, n_pad), 'constant', constant_values=0)
+            seq = np.pad(seq, (n_pad, 0), 'constant', constant_values=0)
+            loss_mask = np.pad(loss_mask, (n_pad, 0), 'constant', constant_values=0)
 
         return {
             'input_ids': seq[:-1],
