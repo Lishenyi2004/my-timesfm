@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from typing import Optional
 
 import torch
@@ -28,15 +29,19 @@ class TimesFM2p5TrainingConfig(PretrainedConfig):
         num_quantiles: int = 10,
         use_quantile_loss: bool = True,
         quantile_loss_weight: float = 1.0,
-        timesfm_num_layers: Optional[int] = None,
-        timesfm_num_heads: Optional[int] = None,
-        timesfm_model_dims: Optional[int] = None,
         use_revin_norm: bool = True,
         use_gt: bool = True,
         use_revin_denorm: bool = True,
+        fix_quantile_crossing: bool = True,
+        infer_is_positive: bool = True,
         enable_overfit_fixed_window: bool = False,
         overfit_hist_length: int = 384,
         overfit_gt_length: int = 128,
+        debug_input_dump_path: Optional[str] = None,
+        debug_input_dump_every_n_steps: int = 0,
+        debug_input_dump_max_steps: int = 20,
+        debug_input_dump_include_values: bool = False,
+        debug_input_dump_max_values: int = 32,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -46,15 +51,19 @@ class TimesFM2p5TrainingConfig(PretrainedConfig):
         self.num_quantiles = num_quantiles
         self.use_quantile_loss = use_quantile_loss
         self.quantile_loss_weight = quantile_loss_weight
-        self.timesfm_num_layers = timesfm_num_layers
-        self.timesfm_num_heads = timesfm_num_heads
-        self.timesfm_model_dims = timesfm_model_dims
         self.use_revin_norm = use_revin_norm
         self.use_revin_denorm = use_revin_denorm
         self.use_gt = use_gt
+        self.fix_quantile_crossing = bool(fix_quantile_crossing)
+        self.infer_is_positive = bool(infer_is_positive)
         self.enable_overfit_fixed_window = bool(enable_overfit_fixed_window)
         self.overfit_hist_length = int(overfit_hist_length)
         self.overfit_gt_length = int(overfit_gt_length)
+        self.debug_input_dump_path = debug_input_dump_path
+        self.debug_input_dump_every_n_steps = int(debug_input_dump_every_n_steps)
+        self.debug_input_dump_max_steps = int(debug_input_dump_max_steps)
+        self.debug_input_dump_include_values = bool(debug_input_dump_include_values)
+        self.debug_input_dump_max_values = int(debug_input_dump_max_values)
 
 
 class TimesFM2p5ForTraining(nn.Module):
@@ -63,15 +72,19 @@ class TimesFM2p5ForTraining(nn.Module):
         torch_dtype: Optional[torch.dtype] = None,
         use_quantile_loss: bool = True,
         quantile_loss_weight: float = 1.0,
-        timesfm_num_layers: Optional[int] = None,
-        timesfm_num_heads: Optional[int] = None,
-        timesfm_model_dims: Optional[int] = None,
         use_revin_norm: bool = True,
         use_gt: bool = True,
         use_revin_denorm: bool = True,
+        fix_quantile_crossing: bool = True,
+        infer_is_positive: bool = True,
         enable_overfit_fixed_window: bool = False,
         overfit_hist_length: int = 384,
         overfit_gt_length: int = 128,
+        debug_input_dump_path: Optional[str] = None,
+        debug_input_dump_every_n_steps: int = 0,
+        debug_input_dump_max_steps: int = 20,
+        debug_input_dump_include_values: bool = False,
+        debug_input_dump_max_values: int = 32,
     ):
         super().__init__()
         self._ensure_timesfm_importable()
@@ -81,17 +94,23 @@ class TimesFM2p5ForTraining(nn.Module):
 
         self.timesfm_util = timesfm_util
         self.backbone = TimesFM_2p5_200M_torch_module(
-            num_layers=timesfm_num_layers,
-            num_heads=timesfm_num_heads,
-            model_dims=timesfm_model_dims,
         )
 
         self.use_revin_norm = bool(use_revin_norm)
         self.use_revin_denorm = bool(use_revin_denorm)
         self.use_gt = bool(use_gt)
+        self.fix_quantile_crossing = bool(fix_quantile_crossing)
+        self.infer_is_positive = bool(infer_is_positive)
         self.enable_overfit_fixed_window = bool(enable_overfit_fixed_window)
         self.overfit_hist_length = int(overfit_hist_length)
         self.overfit_gt_length = int(overfit_gt_length)
+        self.debug_input_dump_path = debug_input_dump_path
+        self.debug_input_dump_every_n_steps = int(debug_input_dump_every_n_steps)
+        self.debug_input_dump_max_steps = int(debug_input_dump_max_steps)
+        self.debug_input_dump_include_values = bool(debug_input_dump_include_values)
+        self.debug_input_dump_max_values = int(debug_input_dump_max_values)
+        self._debug_input_forward_step = 0
+        self._debug_input_dumped_steps = 0
 
         self.patch_len = self.backbone.p
         self.output_patch_len = self.backbone.o
@@ -107,15 +126,19 @@ class TimesFM2p5ForTraining(nn.Module):
             num_quantiles=self.num_quantiles,
             use_quantile_loss=self.use_quantile_loss,
             quantile_loss_weight=self.quantile_loss_weight,
-            timesfm_num_layers=self.backbone.x,
-            timesfm_num_heads=self.backbone.h,
-            timesfm_model_dims=self.backbone.md,
             use_revin_norm=self.use_revin_norm,
             use_revin_denorm=self.use_revin_denorm,
             use_gt=self.use_gt,
+            fix_quantile_crossing=self.fix_quantile_crossing,
+            infer_is_positive=self.infer_is_positive,
             enable_overfit_fixed_window=self.enable_overfit_fixed_window,
             overfit_hist_length=self.overfit_hist_length,
             overfit_gt_length=self.overfit_gt_length,
+            debug_input_dump_path=self.debug_input_dump_path,
+            debug_input_dump_every_n_steps=self.debug_input_dump_every_n_steps,
+            debug_input_dump_max_steps=self.debug_input_dump_max_steps,
+            debug_input_dump_include_values=self.debug_input_dump_include_values,
+            debug_input_dump_max_values=self.debug_input_dump_max_values,
         )
 
         if torch_dtype is not None:
@@ -135,29 +158,37 @@ class TimesFM2p5ForTraining(nn.Module):
         torch_dtype: Optional[torch.dtype] = None,
         use_quantile_loss: bool = True,
         quantile_loss_weight: float = 1.0,
-        timesfm_num_layers: Optional[int] = None,
-        timesfm_num_heads: Optional[int] = None,
-        timesfm_model_dims: Optional[int] = None,
         use_revin_norm: bool = True,
         use_revin_denorm: bool = True,
         use_gt: bool = True,
+        fix_quantile_crossing: bool = True,
+        infer_is_positive: bool = True,
         enable_overfit_fixed_window: bool = False,
         overfit_hist_length: int = 384,
         overfit_gt_length: int = 128,
+        debug_input_dump_path: Optional[str] = None,
+        debug_input_dump_every_n_steps: int = 0,
+        debug_input_dump_max_steps: int = 20,
+        debug_input_dump_include_values: bool = False,
+        debug_input_dump_max_values: int = 32,
     ):
         model = cls(
             torch_dtype=torch_dtype,
             use_quantile_loss=use_quantile_loss,
             quantile_loss_weight=quantile_loss_weight,
-            timesfm_num_layers=timesfm_num_layers,
-            timesfm_num_heads=timesfm_num_heads,
-            timesfm_model_dims=timesfm_model_dims,
             use_revin_norm=use_revin_norm,
             use_revin_denorm=use_revin_denorm,
             use_gt=use_gt,
+            fix_quantile_crossing=fix_quantile_crossing,
+            infer_is_positive=infer_is_positive,
             enable_overfit_fixed_window=enable_overfit_fixed_window,
             overfit_hist_length=overfit_hist_length,
             overfit_gt_length=overfit_gt_length,
+            debug_input_dump_path=debug_input_dump_path,
+            debug_input_dump_every_n_steps=debug_input_dump_every_n_steps,
+            debug_input_dump_max_steps=debug_input_dump_max_steps,
+            debug_input_dump_include_values=debug_input_dump_include_values,
+            debug_input_dump_max_values=debug_input_dump_max_values,
         )
         weight_path = model._resolve_weight_path(model_path)
 
@@ -216,6 +247,94 @@ class TimesFM2p5ForTraining(nn.Module):
         # Keep index 0 (mean) unchanged and reverse quantile dimensions.
         return torch.cat([x[..., :1], torch.flip(x[..., 1:], dims=(-1,))], dim=-1)
 
+    @staticmethod
+    def _fix_quantile_crossing(pred_quantile_patches: torch.Tensor) -> torch.Tensor:
+        for quantile_index in [4, 3, 2, 1]:
+            pred_quantile_patches[..., quantile_index] = torch.where(
+                pred_quantile_patches[..., quantile_index]
+                < pred_quantile_patches[..., quantile_index + 1],
+                pred_quantile_patches[..., quantile_index],
+                pred_quantile_patches[..., quantile_index + 1],
+            )
+        for quantile_index in [6, 7, 8, 9]:
+            pred_quantile_patches[..., quantile_index] = torch.where(
+                pred_quantile_patches[..., quantile_index]
+                > pred_quantile_patches[..., quantile_index - 1],
+                pred_quantile_patches[..., quantile_index],
+                pred_quantile_patches[..., quantile_index - 1],
+            )
+        return pred_quantile_patches
+
+    @staticmethod
+    def _infer_is_positive(full_series: torch.Tensor, full_valid: torch.Tensor) -> torch.Tensor:
+        inf_tensor = torch.full_like(full_series, float('inf'))
+        valid_values = torch.where(full_valid > 0, full_series, inf_tensor)
+        return valid_values.min(dim=1).values >= 0
+
+    def _debug_summarize_tensor(self, value: torch.Tensor):
+        detached = value.detach()
+        summary = {
+            'shape': list(detached.shape),
+            'dtype': str(detached.dtype),
+            'device': str(detached.device),
+        }
+
+        if detached.numel() > 0:
+            if detached.dtype == torch.bool:
+                summary['true_ratio'] = float(detached.to(torch.float32).mean().item())
+            else:
+                stats_tensor = detached.to(torch.float32)
+                summary['min'] = float(stats_tensor.min().item())
+                summary['max'] = float(stats_tensor.max().item())
+                summary['mean'] = float(stats_tensor.mean().item())
+                summary['std'] = float(stats_tensor.std(unbiased=False).item())
+
+            if self.debug_input_dump_include_values:
+                max_values = max(1, self.debug_input_dump_max_values)
+                sample = detached.reshape(-1)[:max_values].to('cpu')
+                summary['sample_values'] = sample.tolist()
+
+        return summary
+
+    def _debug_serialize_value(self, value):
+        if isinstance(value, torch.Tensor):
+            return self._debug_summarize_tensor(value)
+        if isinstance(value, (int, float, str, bool)) or value is None:
+            return value
+        if isinstance(value, (list, tuple)):
+            return [self._debug_serialize_value(item) for item in value]
+        if isinstance(value, dict):
+            return {str(k): self._debug_serialize_value(v) for k, v in value.items()}
+        return str(value)
+
+    def _maybe_dump_forward_inputs(self, branch: str, payload: dict):
+        self._debug_input_forward_step += 1
+        if not self.debug_input_dump_path:
+            return
+        if self.debug_input_dump_every_n_steps <= 0:
+            return
+        if self._debug_input_forward_step % self.debug_input_dump_every_n_steps != 0:
+            return
+        if self.debug_input_dump_max_steps > 0 and self._debug_input_dumped_steps >= self.debug_input_dump_max_steps:
+            return
+
+        record = {
+            'forward_step': int(self._debug_input_forward_step),
+            'branch': branch,
+            'rank': os.getenv('RANK', '0'),
+            'local_rank': os.getenv('LOCAL_RANK', '0'),
+            'pid': os.getpid(),
+            'payload': self._debug_serialize_value(payload),
+        }
+
+        try:
+            os.makedirs(os.path.dirname(self.debug_input_dump_path) or '.', exist_ok=True)
+            with open(self.debug_input_dump_path, 'a', encoding='utf-8') as fw:
+                fw.write(json.dumps(record, ensure_ascii=False) + '\n')
+            self._debug_input_dumped_steps += 1
+        except Exception as exc:
+            print(f'[TimesFM2p5ForTraining] failed to dump debug input json: {exc}')
+
     def forward(
         self,
         input_ids: torch.FloatTensor = None,
@@ -241,6 +360,7 @@ class TimesFM2p5ForTraining(nn.Module):
                 full_valid = torch.ones_like(full_series, dtype=torch.float32, device=device)
             else:
                 full_valid = loss_masks.to(device=device, dtype=torch.float32)
+            is_positive = self._infer_is_positive(full_series, full_valid) if self.infer_is_positive else None
 
             batch_size, seq_len = full_series.shape
             
@@ -285,19 +405,13 @@ class TimesFM2p5ForTraining(nn.Module):
                 ).item()
                 hist_len = (hist_last_patch_idx + 1) * self.patch_len
 
-            # 使用 hist 统计量（整段序列而非逐 patch）对 hist/gt 统一归一化，再拼接回单条序列
-            hist_series = input_series[:, :hist_len]
-            gt_series = input_series[:, hist_len:valid_len]
-            hist_mask_series = input_mask_series[:, :hist_len]
+            # 使用整条序列统计量做统一归一化（基于有效 mask）
+            full_valid_count = torch.clamp(input_mask_series.sum(dim=1, keepdim=True), min=1.0)
+            full_mu = (input_series * input_mask_series).sum(dim=1, keepdim=True) / full_valid_count
+            full_var = ((input_series - full_mu) ** 2 * input_mask_series).sum(dim=1, keepdim=True) / full_valid_count
+            full_sigma = torch.sqrt(torch.clamp(full_var, min=1e-8))
 
-            hist_valid_count = torch.clamp(hist_mask_series.sum(dim=1, keepdim=True), min=1.0)
-            hist_mu = (hist_series * hist_mask_series).sum(dim=1, keepdim=True) / hist_valid_count
-            hist_var = ((hist_series - hist_mu) ** 2 * hist_mask_series).sum(dim=1, keepdim=True) / hist_valid_count
-            hist_sigma = torch.sqrt(torch.clamp(hist_var, min=1e-8))
-
-            hist_series = (hist_series - hist_mu) / hist_sigma
-            gt_series = (gt_series - hist_mu) / hist_sigma
-            input_series = torch.cat([hist_series, gt_series], dim=1)
+            input_series = (input_series - full_mu) / full_sigma
 
             # 3. 构建 Input Patches [B, N, 32]
             patched_inputs = input_series.reshape(batch_size, num_patches, self.patch_len)
@@ -312,6 +426,7 @@ class TimesFM2p5ForTraining(nn.Module):
             else:
                 normed_inputs = patched_inputs
             normed_inputs = torch.where(patched_masks, 0.0, normed_inputs)
+            backbone_first_param = next(self.backbone.parameters(), None)
             model_dtype = next(self.backbone.parameters()).dtype
             normed_inputs = normed_inputs.to(dtype=model_dtype)
 
@@ -439,22 +554,73 @@ class TimesFM2p5ForTraining(nn.Module):
             pred_aligned = output_ts[:, pred_start_idx:pred_start_idx + min_patches, :, :].clone()
             continuous_quantile_patches = min(min_patches, quantile_spread_patches.shape[1])
 
-            for quantile_index in [1, 2, 3, 4, 6, 7, 8, 9]:
-                pred_aligned[:, :continuous_quantile_patches, :, quantile_index] = (
-                    quantile_spread_patches[:, :continuous_quantile_patches, :self.output_patch_len, quantile_index]
-                    - quantile_spread_patches[:, :continuous_quantile_patches, :self.output_patch_len, self.decode_index]
-                    + pred_aligned[:, :continuous_quantile_patches, :self.output_patch_len, self.decode_index]
-                )
-            pred_aligned_mean = output_ts[:, :min_patch_mse, :, self.decode_index]
+            # for quantile_index in [1, 2, 3, 4, 6, 7, 8, 9]:
+            #     pred_aligned[:, :continuous_quantile_patches, :, quantile_index] = (
+            #         quantile_spread_patches[:, :continuous_quantile_patches, :self.output_patch_len, quantile_index]
+            #         - quantile_spread_patches[:, :continuous_quantile_patches, :self.output_patch_len, self.decode_index]
+            #         + pred_aligned[:, :continuous_quantile_patches, :self.output_patch_len, self.decode_index]
+            #     )
             targets_aligned = targets_unfolded[:, :min_patches, :]
             masks_aligned = masks_unfolded[:, :min_patches, :]
             targets_aligned_mse = mse_source_unfolded[:, :min_patch_mse, :]
             masks_aligned_mse = mse_masks_unfolded[:, :min_patch_mse, :]
+            pred = output_ts[:, :min_patch_mse , :, self.decode_index].clone()
+            target = targets_unfolded[:, :continuous_quantile_patches, :]
+            mask = masks_unfolded[:, :continuous_quantile_patches, :]
+
+            pred_quantile_patches = output_ts[:, :min_patch_mse, :, :].clone()
+            if self.fix_quantile_crossing:
+                pred_quantile_patches = self._fix_quantile_crossing(pred_quantile_patches)
+
+            if is_positive is not None:
+                zero_in_norm_3d = (-full_mu / full_sigma.clamp(min=1e-5)).unsqueeze(-1)
+                zero_in_norm_4d = zero_in_norm_3d.unsqueeze(-1)
+                pred = torch.where(
+                    is_positive[:, None, None],
+                    torch.maximum(pred, zero_in_norm_3d),
+                    pred,
+                )
+                pred_quantile_patches = torch.where(
+                    is_positive[:, None, None, None],
+                    torch.maximum(pred_quantile_patches, zero_in_norm_4d),
+                    pred_quantile_patches,
+                )
+            self._maybe_dump_forward_inputs(
+                branch='use_gt',
+                payload={
+                    'input_ids': input_ids,
+                    'labels': labels,
+                    'loss_masks': loss_masks,
+                    'attention_mask': attention_mask,
+                    'full_valid': full_valid,
+                    'input_series': input_series,
+                    'input_mask_series': input_mask_series,
+                    'patched_inputs': patched_inputs,
+                    'patched_masks': patched_masks,
+                    'targets_unfolded': targets_unfolded,
+                    'masks_unfolded': masks_unfolded,
+                    'mse_source_unfolded': mse_source_unfolded,
+                    'mse_masks_unfolded': mse_masks_unfolded,
+                    'batch_size': batch_size,
+                    'seq_len': seq_len,
+                    'num_patches': num_patches,
+                    'valid_len': valid_len,
+                    'hist_len': hist_len,
+                    'hist_last_patch_idx': hist_last_patch_idx,
+                    'target_start': target_start,
+                    'target_end': target_end,
+                    'pred_start_idx': pred_start_idx,
+                    'min_patches': min_patches,
+                    'min_patch_mse': min_patch_mse,
+                    'continuous_quantile_patches': continuous_quantile_patches,
+                    'num_future_patches': num_future_patches,
+                },
+            )
 
 
             
             # 7. 计算 Loss
-            point_loss = (pred_aligned_mean - targets_aligned_mse) ** 2
+            point_loss = (pred - targets_aligned_mse) ** 2
             
             # 应用 Mask (包括原始数据的 mask 和 边界不足导致的截断)
             weighted_loss = point_loss * masks_aligned_mse
@@ -465,26 +631,26 @@ class TimesFM2p5ForTraining(nn.Module):
 
             # 8. 分位数 Loss (Optional)
             if self.use_quantile_loss:
-                quantile_preds = pred_aligned[:, :continuous_quantile_patches, :, 1:] # [B, N, 128, Q]
-                quantile_targets = targets_aligned[:, :continuous_quantile_patches, :].unsqueeze(-1)   # [B, N, 128, 1]
-                quantile_masks = masks_aligned[:, :continuous_quantile_patches, :].unsqueeze(-1)       # [B, N, 128, 1]
+                quantile_preds = pred_quantile_patches[:, :, :, 1:] # [B, N, 128, Q]
+                quantile_targets = targets_aligned_mse[:, :, :].unsqueeze(-1)   # [B, N, 128, 1]
+                quantile_masks = masks_aligned_mse[:, :, :].unsqueeze(-1)       # [B, N, 128, 1]
                 quantile_valid_count = torch.clamp(quantile_masks.sum(), min=1.0)
 
                 for q_idx, q_val in enumerate(self.quantiles):
                     q_pred = quantile_preds[:, :, :, q_idx]
                     q_loss = self._quantile_loss(q_pred, quantile_targets[..., 0], q_val)
-                    quantile_loss_sum += (q_loss * quantile_masks[..., 0]).sum() / quantile_valid_count
+                    quantile_loss_sum = quantile_loss_sum + (q_loss * quantile_masks[..., 0]).sum() / quantile_valid_count
 
                 loss = train_loss + self.quantile_loss_weight * quantile_loss_sum
             if not return_dict:
-                return (loss, pred_aligned_mean, train_loss, quantile_loss_sum)
+                return (loss, pred, train_loss, quantile_loss_sum)
 
             return TimesFM2p5CausalLMOutput(
                 loss=loss,
-                logits=pred_aligned_mean, # 返回对齐后的预测值
+                logits=pred, # 返回与 train_loss 对齐后的预测值
                 train_loss=train_loss,
                 quantile_loss_sum=quantile_loss_sum,
-                quantile_logits=pred_aligned,
+                quantile_logits=pred_quantile_patches,
             )
         
         else :
@@ -504,6 +670,7 @@ class TimesFM2p5ForTraining(nn.Module):
                 full_valid = torch.ones_like(full_series, dtype=torch.float32, device=device)
             else:
                 full_valid = loss_masks.to(device=device, dtype=torch.float32)
+            is_positive = self._infer_is_positive(full_series, full_valid) if self.infer_is_positive else None
 
             batch_size, seq_len = full_series.shape
             
@@ -540,7 +707,8 @@ class TimesFM2p5ForTraining(nn.Module):
             else:
                 normed_inputs = patched_inputs
             normed_inputs = torch.where(patched_masks, 0.0, normed_inputs)
-            model_dtype = next(self.backbone.parameters()).dtype
+            backbone_first_param = next(self.backbone.parameters(), None)
+            model_dtype = backbone_first_param.dtype if backbone_first_param is not None else normed_inputs.dtype
             normed_inputs = normed_inputs.to(dtype=model_dtype)
 
             # 5. 模型前向传播
@@ -584,6 +752,31 @@ class TimesFM2p5ForTraining(nn.Module):
             targets_aligned = targets_unfolded[:, :min_patches, :]
             masks_aligned = masks_unfolded[:, :min_patches, :]
 
+            self._maybe_dump_forward_inputs(
+                branch='no_gt',
+                payload={
+                    'input_ids': input_ids,
+                    'labels': labels,
+                    'loss_masks': loss_masks,
+                    'attention_mask': attention_mask,
+                    'full_valid': full_valid,
+                    'input_series': input_series,
+                    'input_mask_series': input_mask_series,
+                    'patched_inputs': patched_inputs,
+                    'patched_masks': patched_masks,
+                    'source_for_targets': source_for_targets,
+                    'mask_for_targets': mask_for_targets,
+                    'targets_unfolded': targets_unfolded,
+                    'masks_unfolded': masks_unfolded,
+                    'batch_size': batch_size,
+                    'seq_len': seq_len,
+                    'num_patches': num_patches,
+                    'valid_len': valid_len,
+                    'target_start_idx': target_start_idx,
+                    'min_patches': min_patches,
+                },
+            )
+
             # 7. 计算 Loss
             point_loss = (pred_aligned - targets_aligned) ** 2
             
@@ -602,6 +795,23 @@ class TimesFM2p5ForTraining(nn.Module):
                         + quantile_preds_full[:, :, :self.output_patch_len, self.decode_index]
                     )
 
+            if self.fix_quantile_crossing:
+                quantile_preds_full = self._fix_quantile_crossing(quantile_preds_full)
+
+            if is_positive is not None:
+                zero_in_norm_3d = torch.zeros(1, device=device)
+                zero_in_norm_4d = torch.zeros(1, device=device)
+                pred_aligned = torch.where(
+                    is_positive[:, None, None],
+                    torch.maximum(pred_aligned, zero_in_norm_3d),
+                    pred_aligned,
+                )
+                quantile_preds_full = torch.where(
+                    is_positive[:, None, None, None],
+                    torch.maximum(quantile_preds_full, zero_in_norm_4d),
+                    quantile_preds_full,
+                )
+
             # 8. 分位数 Loss (Optional)
             if self.use_quantile_loss:
                 quantile_preds = quantile_preds_full[:, :, :, 1:] # [B, N, 128, Q]
@@ -611,7 +821,7 @@ class TimesFM2p5ForTraining(nn.Module):
                 for q_idx, q_val in enumerate(self.quantiles):
                     q_pred = quantile_preds[:, :, :, q_idx]
                     q_loss = self._quantile_loss(q_pred, quantile_targets[..., 0], q_val)
-                    quantile_loss_sum += (q_loss * quantile_masks[..., 0]).sum() / valid_count
+                    quantile_loss_sum = quantile_loss_sum + (q_loss * quantile_masks[..., 0]).sum() / valid_count
 
                 loss = train_loss + self.quantile_loss_weight * quantile_loss_sum
             if not return_dict:

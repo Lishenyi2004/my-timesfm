@@ -1,17 +1,20 @@
-JOB_NAME="time-moe-train-100-fix"
+JOB_NAME="train-time300b-m4"
 WORKDIR="/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE"
 TRAIN_SCRIPT="${WORKDIR}/train.sh"
 
 # 资源配置
-GPU_PER_NODE=8
-NUM_NODES=3
-NAMESPACE="ailab-speechllm"
-CHARGED_GROUP="speechllm_gpu"
+GPU_PER_NODE=4
+NUM_NODES=1
+NAMESPACE="ailab-brainllm"
+CHARGED_GROUP="brainllm_gpu"
 
 # 计算资源
 GPU=$GPU_PER_NODE
 CPU=$((GPU * 14))
 MEMORY=$((10 * 120000))
+MASTER_PORT=$((20000 + RANDOM % 20000))
+
+echo "Using MASTER_PORT=${MASTER_PORT}"
 
 rjob submit \
     --gpu=$GPU \
@@ -23,6 +26,7 @@ rjob submit \
     --charged-group=$CHARGED_GROUP \
     -e GROUP=$CHARGED_GROUP \
     -e DISTRIBUTED_JOB=true \
+    -e MASTER_PORT=$MASTER_PORT \
     --private-machine=group \
     --image=registry.h.pjlab.org.cn/ailab-speechllm-speechllm_cpu/lsy:moe-fast \
     --mount=gpfs://gpfs1/lishenyi:/mnt/shared-storage-user/lishenyi \

@@ -56,7 +56,7 @@ class TimeMoEWindowDataset:
         for seq_idx in iterator:
             n_points = self.dataset.get_sequence_length_by_idx(seq_idx)
             # Skip sequences with fewer than 2 points
-            if n_points < 481:
+            if n_points < 2:
                 continue
             self.sub_seq_indexes.append((seq_idx, 0))
             for offset_idx in range(

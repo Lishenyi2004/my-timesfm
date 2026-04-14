@@ -14,7 +14,7 @@ if __name__ == "__main__":
         "--model_path",
         "-m",
         type=str,
-        default="google/timesfm-2.5-200m-pytorch",
+        default="/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE/timesfm-2.5-200m-pytorch",
         help="Path to pretrained model. Default: google/timesfm-2.5-200m-pytorch",
     )
     parser.add_argument(
@@ -95,24 +95,7 @@ if __name__ == "__main__":
         default=1,
         help="weight for quantile loss term when enabled",
     )
-    parser.add_argument(
-        "--timesfm_num_layers",
-        type=int,
-        default=None,
-        help="override TimesFM transformer layers (default: model config)",
-    )
-    parser.add_argument(
-        "--timesfm_num_heads",
-        type=int,
-        default=None,
-        help="override TimesFM attention heads (default: model config)",
-    )
-    parser.add_argument(
-        "--timesfm_model_dims",
-        type=int,
-        default=None,
-        help="override TimesFM model dims (default: model config)",
-    )
+
     parser.add_argument(
         "--use_revin_norm",
         action=argparse.BooleanOptionalAction,
@@ -148,6 +131,36 @@ if __name__ == "__main__":
         type=int,
         default=128,
         help="fixed ground-truth length when enable_overfit_fixed_window=True",
+    )
+    parser.add_argument(
+        "--debug_input_dump_path",
+        type=str,
+        default=None,
+        help="jsonl path for dumping training input summaries; disabled when unset",
+    )
+    parser.add_argument(
+        "--debug_input_dump_every_n_steps",
+        type=int,
+        default=500,
+        help="dump one input summary every N forward steps; <=0 disables dumping",
+    )
+    parser.add_argument(
+        "--debug_input_dump_max_steps",
+        type=int,
+        default=20,
+        help="max dumped forward steps per process; <=0 means no limit",
+    )
+    parser.add_argument(
+        "--debug_input_dump_include_values",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="include sampled raw tensor values in debug dump",
+    )
+    parser.add_argument(
+        "--debug_input_dump_max_values",
+        type=int,
+        default=32,
+        help="max sampled raw values per tensor when debug_input_dump_include_values is enabled",
     )
 
     parser.add_argument(
@@ -218,7 +231,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--validation_split_ratio",
         type=float,
-        default=0.1,
+        default=0.2,
         help="validation split ratio from training windows (default: 0.01)",
     )
     parser.add_argument(
@@ -325,15 +338,17 @@ if __name__ == "__main__":
         weight_decay=args.weight_decay,
         use_quantile_loss=args.use_quantile_loss,
         quantile_loss_weight=args.quantile_loss_weight,
-        timesfm_num_layers=args.timesfm_num_layers,
-        timesfm_num_heads=args.timesfm_num_heads,
-        timesfm_model_dims=args.timesfm_model_dims,
         use_revin_norm=args.use_revin_norm,
         use_gt=args.use_gt,
         use_revin_denorm=args.use_revin_denorm,
         enable_overfit_fixed_window=args.enable_overfit_fixed_window,
         overfit_hist_length=args.overfit_hist_length,
         overfit_gt_length=args.overfit_gt_length,
+        debug_input_dump_path=args.debug_input_dump_path,
+        debug_input_dump_every_n_steps=args.debug_input_dump_every_n_steps,
+        debug_input_dump_max_steps=args.debug_input_dump_max_steps,
+        debug_input_dump_include_values=args.debug_input_dump_include_values,
+        debug_input_dump_max_values=args.debug_input_dump_max_values,
         gradient_checkpointing=args.gradient_checkpointing,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
         deepspeed=args.deepspeed,

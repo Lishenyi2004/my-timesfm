@@ -44,14 +44,17 @@ class TimeMoeRunner:
                     torch_dtype=kwargs.get('torch_dtype'),
                     use_quantile_loss=kwargs.get('use_quantile_loss', True),
                     quantile_loss_weight=kwargs.get('quantile_loss_weight', 1.0),
-                    timesfm_num_layers=kwargs.get('timesfm_num_layers'),
-                    timesfm_num_heads=kwargs.get('timesfm_num_heads'),
-                    timesfm_model_dims=kwargs.get('timesfm_model_dims'),
                     use_revin_norm=kwargs.get('use_revin_norm', True),
+                    use_gt=kwargs.get('use_gt', True),
                     use_revin_denorm=kwargs.get('use_revin_denorm', True),
                     enable_overfit_fixed_window=kwargs.get('enable_overfit_fixed_window', False),
                     overfit_hist_length=kwargs.get('overfit_hist_length', 384),
                     overfit_gt_length=kwargs.get('overfit_gt_length', 128),
+                    debug_input_dump_path=kwargs.get('debug_input_dump_path'),
+                    debug_input_dump_every_n_steps=kwargs.get('debug_input_dump_every_n_steps', 0),
+                    debug_input_dump_max_steps=kwargs.get('debug_input_dump_max_steps', 20),
+                    debug_input_dump_include_values=kwargs.get('debug_input_dump_include_values', False),
+                    debug_input_dump_max_values=kwargs.get('debug_input_dump_max_values', 32),
                 )
             else:
                 model = TimesFM2p5ForTraining.from_pretrained(
@@ -59,14 +62,17 @@ class TimeMoeRunner:
                     torch_dtype=kwargs.get('torch_dtype'),
                     use_quantile_loss=kwargs.get('use_quantile_loss', True),
                     quantile_loss_weight=kwargs.get('quantile_loss_weight', 1.0),
-                    timesfm_num_layers=kwargs.get('timesfm_num_layers'),
-                    timesfm_num_heads=kwargs.get('timesfm_num_heads'),
-                    timesfm_model_dims=kwargs.get('timesfm_model_dims'),
                     use_revin_norm=kwargs.get('use_revin_norm', True),
+                    use_gt=kwargs.get('use_gt', True),
                     use_revin_denorm=kwargs.get('use_revin_denorm', True),
                     enable_overfit_fixed_window=kwargs.get('enable_overfit_fixed_window', False),
                     overfit_hist_length=kwargs.get('overfit_hist_length', 384),
                     overfit_gt_length=kwargs.get('overfit_gt_length', 128),
+                    debug_input_dump_path=kwargs.get('debug_input_dump_path'),
+                    debug_input_dump_every_n_steps=kwargs.get('debug_input_dump_every_n_steps', 0),
+                    debug_input_dump_max_steps=kwargs.get('debug_input_dump_max_steps', 20),
+                    debug_input_dump_include_values=kwargs.get('debug_input_dump_include_values', False),
+                    debug_input_dump_max_values=kwargs.get('debug_input_dump_max_values', 32),
                 )
             return model
 
@@ -210,7 +216,7 @@ class TimeMoeRunner:
             adam_beta1=float(train_config.get("adam_beta1", 0.9)),
             adam_beta2=float(train_config.get("adam_beta2", 0.95)),
             adam_epsilon=float(train_config.get("adam_epsilon", 1e-8)),
-            lr_scheduler_type=train_config.get("lr_scheduler_type", 'constant'),
+            lr_scheduler_type=train_config.get("lr_scheduler_type", 'cosine'),
             cosine_num_cycles=float(train_config.get("cosine_num_cycles", 0.5)),
             warmup_ratio=float(train_config.get("warmup_ratio") or 0.0),
             warmup_steps=int(train_config.get("warmup_steps", 0)),
@@ -247,6 +253,11 @@ class TimeMoeRunner:
 
         model_path = train_config.pop('model_path', None) or self.model_path
         model_family = train_config.get('model_family') or self.model_family
+        debug_input_dump_every_n_steps = int(train_config.get('debug_input_dump_every_n_steps', 0))
+        debug_input_dump_path = train_config.get('debug_input_dump_path')
+        if debug_input_dump_path is None and debug_input_dump_every_n_steps > 0:
+            rank = os.getenv('RANK', '0')
+            debug_input_dump_path = os.path.join(self.output_path, f'train_input_debug_rank{rank}.jsonl')
         if model_path is not None:
             model = self.load_model(
                 model_path=model_path,
@@ -255,17 +266,26 @@ class TimeMoeRunner:
                 model_family="timesfm_2p5",
                 use_quantile_loss=bool(train_config.get('use_quantile_loss', True)),
                 quantile_loss_weight=float(train_config.get('quantile_loss_weight', 1.0)),
-                timesfm_num_layers=train_config.get('timesfm_num_layers'),
-                timesfm_num_heads=train_config.get('timesfm_num_heads'),
-                timesfm_model_dims=train_config.get('timesfm_model_dims'),
                 use_revin_norm=bool(train_config.get('use_revin_norm', True)),
+                use_gt=bool(train_config.get('use_gt', True)),
                 use_revin_denorm=bool(train_config.get('use_revin_denorm', True)),
                 enable_overfit_fixed_window=bool(train_config.get('enable_overfit_fixed_window', False)),
                 overfit_hist_length=int(train_config.get('overfit_hist_length', 384)),
                 overfit_gt_length=int(train_config.get('overfit_gt_length', 128)),
+                debug_input_dump_path=debug_input_dump_path,
+                debug_input_dump_every_n_steps=debug_input_dump_every_n_steps,
+                debug_input_dump_max_steps=int(train_config.get('debug_input_dump_max_steps', 20)),
+                debug_input_dump_include_values=bool(train_config.get('debug_input_dump_include_values', False)),
+                debug_input_dump_max_values=int(train_config.get('debug_input_dump_max_values', 32)),
                 attn_implementation=train_config.get('attn_implementation', 'eager'),
             )
             log_in_local_rank_0(f'Load model parameters from: {model_path}')
+            if debug_input_dump_path and debug_input_dump_every_n_steps > 0:
+                log_in_local_rank_0(
+                    f'Enable input debug dump: path={debug_input_dump_path}, '
+                    f'every_n_steps={debug_input_dump_every_n_steps}, '
+                    f'max_steps={int(train_config.get("debug_input_dump_max_steps", 20))}'
+                )
         else:
             raise ValueError('Model path is None')
 

@@ -73,7 +73,7 @@
 
 ---
 
-### 6. `time_moe/trainer/hf_trainer.py`
+### 6. `time_moe/trainer/hf_trainer.py` √
 
 | 行号（当前） | 与 base 的差异要点 |
 |--------------|-------------------|

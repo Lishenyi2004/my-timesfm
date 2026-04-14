@@ -1,14 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-# ===================================================
-# 1. 激活环境
-# ===================================================
 source /root/miniconda3/bin/activate MOE
 
-# ===================================================
-# 1.1 修复 CUDA 动态库优先级（避免加载 cublasLt stub）
-# ===================================================
 sanitize_ld_library_path() {
     local original_ld="${LD_LIBRARY_PATH:-}"
     local sanitized_ld=""
@@ -51,35 +45,23 @@ sanitize_ld_library_path() {
 
 sanitize_ld_library_path
 
-echo ">>> 平台注入信息:"
-echo "NODE_RANK: ${NODE_RANK}"
-echo "NODE_COUNT: ${NODE_COUNT}"
-echo "MASTER_ADDR: ${MASTER_ADDR}"
-echo "NCCL_SOCKET_IFNAME: ${NCCL_SOCKET_IFNAME}"
-# echo "LD_LIBRARY_PATH: ${LD_LIBRARY_PATH}"
-
-# 检查必要变量
 if [ -z "${NODE_RANK}" ] || [ -z "${MASTER_ADDR}" ]; then
     echo "Error: 平台环境变量缺失！请确保使用了 -e DISTRIBUTED_JOB=true"
     env | grep -E "NODE|MASTER"
     exit 1
 fi
 
-# 2.1 设置端口（优先使用外部注入，避免固定端口冲突）
-export MASTER_PORT=${MASTER_PORT:-29500}
+export MASTER_PORT=29500
 
-# 2.2 设置 PyTorch/NCCL 必要的变量
 if [ -n "${NCCL_SOCKET_IFNAME}" ]; then
-    export GLOO_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME%%,*} # 取第一个网卡
+    export GLOO_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME%%,*}
     export TP_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME%%,*}
 fi
 
-# 2.3 显式导出给 Python 脚本使用的变量
-export RANK=${NODE_RANK}       # 很多旧脚本习惯用 RANK 代表节点 ID
-export WORLD_SIZE=${NODE_COUNT} # 这里指节点数，具体看你的 python 脚本逻辑
+export RANK=${NODE_RANK}
+export WORLD_SIZE=${NODE_COUNT}
 export NNODES=${NODE_COUNT}
 
-# 2.4 NCCL/PyTorch 通信稳定性参数（降低长时间 allreduce 超时风险）
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_BLOCKING_WAIT=1
 export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=7200
@@ -87,40 +69,39 @@ export NCCL_IB_TIMEOUT=22
 export NCCL_IB_RETRY_CNT=7
 export NCCL_DEBUG=WARN
 
-# ===================================================
-# 3. 启动训练
-# ===================================================
 cd /mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE
-DATA_PATH="/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/datasets/time300b/b52d0ca9de8da5202f73a5057681fca6b48906fb_m4_symlinks"
 
-echo "---------------------------------------"
-echo "启动命令: python torch_dist_run.py main.py"
-echo "Master: $MASTER_ADDR:$MASTER_PORT"
-echo "Node Rank: $NODE_RANK / $NODE_COUNT"
-echo "---------------------------------------"
+DATA_PATH="/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/datasets/time300b/b52d0ca9de8da5202f73a5057681fca6b48906fb_m4_symlinks/m4_hourly"
+TEACHER_PATH="/mnt/shared-storage-gpfs2/speechllm-share/lishenyi/Time-MoE/timesfm-2.5-200m-pytorch"
 
-# 使用 exec 让 Python 接管进程，确保信号传递
-# 并读取环境变量 MASTER_ADDR, MASTER_PORT, NODE_RANK
-exec python torch_dist_run.py main.py \
-    --from_scratch \
+exec python torch_dist_run.py distill_main.py \
     -d "$DATA_PATH" \
-    --global_batch_size 4096 \
+    --teacher_model_path "$TEACHER_PATH" \
+    --student_num_layers 8 \
+    --init_student_from_teacher \
+    --distill_supervised_weight 1.0 \
+    --distill_point_weight 1.0 \
+    --distill_quantile_weight 0.5 \
+    --global_batch_size 1024 \
     --micro_batch_size 1024 \
     --evaluation_strategy steps \
-    --eval_steps 100 \
+    --eval_steps 4000 \
     --save_strategy steps \
-    --save_steps 100 \
+    --save_steps 4000 \
     --load_best_model_at_end \
     --dataloader_num_workers 1 \
     --warmup_ratio 0.03 \
-    --lr_scheduler_type cosine  \
+    --lr_scheduler_type cosine \
     --cosine_num_cycles 0.5 \
     --learning_rate 1e-3 \
     --min_learning_rate 1e-5 \
     --weight_decay 0.05 \
     --ddp_timeout 7200 \
     --precision fp32 \
-    --num_train_epochs 100 \
+    --num_train_epochs 1000 \
     --normalization_method none \
-    --output_path logs_2/time300b_m_no_all_spread\
-    --ddp_find_unused_parameters
+    --output_path logs_2/time300b_distill_m4_hourly_t_all \
+    --ddp_find_unused_parameters \
+    --enable_overfit_fixed_window \
+    --overfit_hist_length 384 \
+    --overfit_gt_length 128

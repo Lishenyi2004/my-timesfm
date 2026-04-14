@@ -105,8 +105,6 @@ class RotaryPositionalEmbedding(nn.Module):
     sinusoid_inp = position / timescale
     sin = torch.sin(sinusoid_inp)
     cos = torch.cos(sinusoid_inp)
-    sin = sin.to(inputs.dtype)
-    cos = cos.to(inputs.dtype)
     first_half, second_half = torch.chunk(inputs, 2, dim=-1)
     first_part = first_half * cos - second_half * sin
     second_part = second_half * cos + first_half * sin
